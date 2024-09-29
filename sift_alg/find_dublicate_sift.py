@@ -5,12 +5,9 @@
 # Чтение из видео ключевых кадров
 # Получение sift точек
 # Сравнение точек текущего кадра со всеми точками из БД
-# выбор дубликата по максимальному совпадению кадров
+# выбор дубликата по максимальному совпадению нескольких кадров
 # Расширение БД уникальными видео
-# Формирование выходной csv таблицы для сравнения со входной
 
-
-import csv
 import datetime
 import os
 import get_i_frame
@@ -19,44 +16,31 @@ import sift_controller
 import utils
 import numpy as np
 import pickle
+import urllib.request
 
-# подаем на вход train базу
-#input_csv_filename = 'd:\\yappi\\train_data_yappy\\train.csv'
-input_csv_filename = 'd:\\yappi\\test_data_yappy\\test.csv'
+def find_dublicate_sift(url):
+    file_dir = "d:\\yappi\\test_data_yappy\\test_dataset"
+    base_fname = "d:\\yappi\\test_data_yappy\\test_dataset\\siftdump.pkl"
 
-# Читаем ее полностью
-with open(input_csv_filename, newline='') as f:
-    reader = csv.reader(f)
-    input_csv_table = list(reader)
-#print(input_csv_table)
+    filename = url.split('/')[-1]
+    uuid = url.split('.')[0]
+    filename = os.path.join(file_dir, filename)
 
-treshold = 0.25 # Порог похожести видео (сколько точек схоже на двух картинках. отнормированно к общему числу точек)
-file_ext = ".mp4"
-#file_dir = "d:\\yappi\\train_data_yappy\\train_dataset"
-file_dir = "d:\\yappi\\test_data_yappy\\test_dataset"
-output_csv_filename = 'output_csv.csv'
+    urllib.request.urlretrieve(url, filename)
 
-f = open(output_csv_filename,'w')
-f.write("created,uuid,link,is_duplicate,duplicate_for,is_hard\n")
-csv_bd = []
-bd = []
-# Читаем каждый файл из датасета
-for idx, table_row in enumerate(input_csv_table):
-    if idx==0:
-        continue
-    print(idx)
-    datetime_string = table_row[0]
-    datetime_obj = datetime.datetime.strptime(table_row[0], "%Y-%m-%d %H:%M:%S")
-
-    uuid = table_row[1]
-    filename = os.path.join(file_dir, uuid + file_ext)
     if not os.path.isfile(filename):
-        continue
+        print("error open file!")
+        return [False, '']
 
-    link = table_row[2]
-    #is_duplicate = bool(table_row[3])
-    #duplicate_for = table_row[4]
-    #is_hard = bool(table_row[5])
+    treshold = 0.15 # Порог похожести видео (сколько точек схоже на двух картинках. отнормированно к общему числу точек)
+
+    # подаем на вход train базу
+    with open(base_fname, "rb") as dump:
+        bd = pickle.load(dump)
+        if bd is None:
+            bd = []
+
+    bd_len_orig = len(bd)
 
     # Получим номера ключевых кадров
     index = get_i_frame.extract_key_frames(filename)
@@ -115,42 +99,43 @@ for idx, table_row in enumerate(input_csv_table):
                     if m[1]<treshold: # кадр уникальный, сохраним его фичи в БД
                         bd.append([uuid, feature])
 
-    if idx==1: # это первое видео, сохраним его в csv
-        csv_out = [datetime_string, uuid, link, False, '', False]
-        csv_bd.append(csv_out)
-        str_out = (",".join(str(x) for x in csv_out))
-        f.write("%s\n" % str_out)
+    is_duplicate_cur = False
+    is_hard_cur = False
+    uidd_dublicate = ''
 
     if len(max_match_array)>0:
-        m = utils.get_top_k_result(max_match_array, 1) # выберем кадр, который больше всех совпадает с кадром в бд
-        # if len(m)==2: # голосование за несколько кадров
-        #     m1 = m[0]
-        #     m2 = m[1]
-        #     if (m1[0] == m2[0]) & (m1[1]>treshold) & (m2[1]>treshold):
-        #         is_duplicate_cur = True
-        #         is_hard_cur = False
-        #         uidd_dublicate = m1[0]
-        #     else:
-        #         is_duplicate_cur = False
-        #         is_hard_cur = False
-        #         uidd_dublicate = ''
-        # else:
-        m=m[0]
-        if m[1] < treshold: # Кадры отличаются
-            is_duplicate_cur = False
-            is_hard_cur = False
-            uidd_dublicate = ''
-        else: # Нашли дубликат
-            is_duplicate_cur = True
-            is_hard_cur = False
-            uidd_dublicate = m[0]
-        csv_out = [datetime_string, uuid, link, is_duplicate_cur, uidd_dublicate, is_hard_cur] # сохраним в таблицу
-        csv_bd.append(csv_out)
+        m = utils.get_top_k_result(max_match_array, 2) # выберем кадр, который больше всех совпадает с кадром в бд
+        if len(m)==2:
+            m1 = m[0]
+            m2 = m[1]
+            if (m1[0] == m2[0]) & (m1[1]>treshold) & (m2[1]>treshold):
+                is_duplicate_cur = True
+                is_hard_cur = False
+                uidd_dublicate = m1[0]
+            else:
+                is_duplicate_cur = False
+                is_hard_cur = False
+                uidd_dublicate = ''
+        else:
+            m=m[0]
+            if m[1] < treshold: # Кадры отличаются
+                is_duplicate_cur = False
+                is_hard_cur = False
+                uidd_dublicate = ''
+            else: # Нашли дубликат
+                is_duplicate_cur = True
+                is_hard_cur = False
+                uidd_dublicate = m[0]
 
-        str_out = (",".join(str(x) for x in csv_out))
-        f.write("%s\n" % str_out) # Сохраним на диск новую запись
-f.close()
-# Сохраняем
-base_fname = "d:\\yappi\\test_data_yappy\\test_dataset\\siftdump.pkl"
-with open(base_fname, 'wb') as dumpfile:
-    pickle.dump(bd, dumpfile)
+    if (bd_len_orig < len(bd)):
+        with open(base_fname, 'wb') as dumpfile:
+            pickle.dump(bd, dumpfile)
+
+    return [is_duplicate_cur, uidd_dublicate]
+
+
+
+if __name__=="__main__":
+    url = 'https://s3.ritm.media/yappy-db-duplicates/5150146c-2ebe-48f4-84ef-363d6fb73b5b.mp4'
+    isdublicate, uuid = find_dublicate_sift(url)
+    print(isdublicate, uuid)
